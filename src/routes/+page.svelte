@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, ErrorApi, type Estadisticas, type Estado, type Username } from '$lib/api';
+	import {
+		api,
+		ErrorApi,
+		esApiInalcanzable,
+		type Estadisticas,
+		type Estado,
+		type Username
+	} from '$lib/api';
 	import { formatoFecha } from '$lib/fecha';
+	import AvisoApi from '$lib/AvisoApi.svelte';
 
 	let stats = $state<Estadisticas>({ total: 0 });
 	let lista = $state<Username[]>([]);
@@ -10,10 +18,22 @@
 	let actual = $state<{ username: string; status: Estado } | null>(null);
 
 	let cantidadGenerar = $state(50);
+	let textoManual = $state('');
 
 	let cargando = $state(false);
 	let error = $state('');
+	let apiOffline = $state(false);
 	let aviso = $state('');
+
+	function manejarError(e: unknown, mensajeDefault: string) {
+		if (e instanceof ErrorApi) {
+			error = e.message;
+			apiOffline = esApiInalcanzable(e);
+		} else {
+			error = mensajeDefault;
+			apiOffline = false;
+		}
+	}
 
 	async function refrescar() {
 		try {
@@ -22,8 +42,9 @@
 				api.usernames(filtro || undefined)
 			]);
 			error = '';
+			apiOffline = false;
 		} catch (e) {
-			error = e instanceof ErrorApi ? e.message : 'Error inesperado consultando la API.';
+			manejarError(e, 'Error inesperado consultando la API.');
 		}
 	}
 
@@ -35,7 +56,28 @@
 			aviso = `Generados ${r.generados}, ${r.insertados_nuevos} nuevos (el resto ya existía en la cola).`;
 			await refrescar();
 		} catch (e) {
-			error = e instanceof ErrorApi ? e.message : 'Error inesperado generando.';
+			manejarError(e, 'Error inesperado generando.');
+		} finally {
+			cargando = false;
+		}
+	}
+
+	async function agregarManual() {
+		const usernames = textoManual
+			.split('\n')
+			.map((u) => u.trim())
+			.filter(Boolean);
+		if (usernames.length === 0) return;
+		cargando = true;
+		aviso = '';
+		try {
+			const r = await api.agregar(usernames);
+			const duplicados = r.solicitados - r.insertados_nuevos;
+			aviso = `Agregados ${r.insertados_nuevos} nuevos${duplicados > 0 ? ` (${duplicados} ya existían)` : ''}.`;
+			textoManual = '';
+			await refrescar();
+		} catch (e) {
+			manejarError(e, 'Error inesperado agregando usernames.');
 		} finally {
 			cargando = false;
 		}
@@ -48,7 +90,7 @@
 			actual = await api.siguiente();
 			await refrescar();
 		} catch (e) {
-			error = e instanceof ErrorApi ? e.message : 'Error inesperado pidiendo el siguiente.';
+			manejarError(e, 'Error inesperado pidiendo el siguiente.');
 		} finally {
 			cargando = false;
 		}
@@ -63,7 +105,7 @@
 			actual = null;
 			await refrescar();
 		} catch (e) {
-			error = e instanceof ErrorApi ? e.message : 'Error inesperado marcando usado.';
+			manejarError(e, 'Error inesperado marcando usado.');
 		} finally {
 			cargando = false;
 		}
@@ -78,7 +120,7 @@
 			actual = null;
 			await refrescar();
 		} catch (e) {
-			error = e instanceof ErrorApi ? e.message : 'Error inesperado liberando.';
+			manejarError(e, 'Error inesperado liberando.');
 		} finally {
 			cargando = false;
 		}
@@ -95,7 +137,7 @@
 <p class="subtitulo">Cola de usernames generados — pedir, confirmar, liberar.</p>
 
 {#if error}
-	<div class="aviso error" style="margin-bottom: 1.25rem;">{error}</div>
+	<AvisoApi mensaje={error} offline={apiOffline} onRetry={refrescar} />
 {/if}
 
 <div class="stats-row">
@@ -124,6 +166,20 @@
 		más
 	</label>
 	<button class="control" onclick={generar} disabled={cargando}>Generar</button>
+</div>
+
+<div class="card manual">
+	<label class="campo-label" for="manual-usernames">Agregar manualmente (uno por línea)</label>
+	<textarea
+		id="manual-usernames"
+		class="control manual-textarea"
+		rows="4"
+		placeholder={'usuario1\nusuario2\nusuario3'}
+		bind:value={textoManual}
+	></textarea>
+	<button class="control" onclick={agregarManual} disabled={cargando || !textoManual.trim()}>
+		Agregar
+	</button>
 </div>
 
 <div class="card actual">
@@ -228,6 +284,25 @@
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.9rem;
+	}
+
+	.manual {
+		margin-bottom: 1.25rem;
+	}
+
+	.campo-label {
+		display: block;
+		margin-bottom: 0.5rem;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.7);
+	}
+
+	.manual-textarea {
+		display: block;
+		width: 100%;
+		margin-bottom: 0.75rem;
+		font-family: 'Courier New', monospace;
+		resize: vertical;
 	}
 
 	.actual {

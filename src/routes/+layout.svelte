@@ -118,7 +118,8 @@
 	}
 
 	:global(button.control),
-	:global(input.control) {
+	:global(input.control),
+	:global(textarea.control) {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;

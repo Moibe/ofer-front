@@ -31,6 +31,28 @@ export interface Pais {
 	etiqueta: string;
 }
 
+export type NombreProveedor = 'tor' | 'proxy';
+
+export interface CoberturaPais {
+	disponible: boolean;
+	fiable: boolean;
+	/** Solo lo reporta Tor: cuántos nodos de salida vivos hay en ese país. */
+	exits?: number;
+}
+
+export interface Proveedor {
+	listo: boolean;
+	motivo: string | null;
+	gratis: boolean;
+	cobertura: Record<string, CoberturaPais>;
+}
+
+export interface InfoPaises {
+	paises: Pais[];
+	default: NombreProveedor;
+	proveedores: Record<NombreProveedor, Proveedor>;
+}
+
 export interface ResultadoPais {
 	pais: string;
 	etiqueta: string;
@@ -38,6 +60,8 @@ export interface ResultadoPais {
 	url_final: string | null;
 	screenshot_b64: string | null;
 	error: string | null;
+	/** Sí hubo captura, pero lo que se ve no es la página real (ej. muro anti-bot). */
+	aviso: string | null;
 }
 
 export interface ResultadoHistorial {
@@ -46,12 +70,15 @@ export interface ResultadoHistorial {
 	status: number | null;
 	url_final: string | null;
 	error: string | null;
+	aviso: string | null;
+	tiene_captura: boolean;
 }
 
 export interface LoteHistorial {
 	lote_id: string;
 	url: string;
 	creado_at: string;
+	proveedor: NombreProveedor;
 	resultados: ResultadoHistorial[];
 }
 
@@ -63,6 +90,14 @@ export class ErrorApi extends Error {
 		super(message);
 		this.name = 'ErrorApi';
 	}
+}
+
+// status 0: el fetch nunca llegó a nada (típico en prod, con PUBLIC_API_URL
+// directo al backend). status 502: en dev, el proxy de Vite SÍ responde
+// (no truena el fetch) pero con Bad Gateway porque no pudo alcanzar el
+// backend real - mismo significado ("no está corriendo"), distinto síntoma.
+export function esApiInalcanzable(e: unknown): boolean {
+	return e instanceof ErrorApi && (e.status === 0 || e.status === 502);
 }
 
 async function peticion<T>(metodo: 'GET' | 'POST', ruta: string, cuerpo?: unknown): Promise<T> {
@@ -108,10 +143,19 @@ export const api = {
 			`/generar?n=${n}`
 		),
 
-	paisesDisponibles: () => pedir<{ paises: Pais[]; max_paises: number }>('/geo/paises'),
+	agregar: (usernames: string[]) =>
+		enviar<{ solicitados: number; insertados_nuevos: number }>('/agregar', { usernames }),
 
-	revisarUrl: (url: string, paises?: string[]) =>
-		enviar<{ lote_id: string; resultados: ResultadoPais[] }>('/geo/revisar', { url, paises }),
+	paisesDisponibles: () => pedir<InfoPaises>('/geo/paises'),
 
-	historial: (limite = 30) => pedir<{ lotes: LoteHistorial[] }>(`/geo/historial?limit=${limite}`)
+	revisarUrl: (url: string, paises?: string[], proveedor?: NombreProveedor) =>
+		enviar<{ lote_id: string; proveedor: NombreProveedor; resultados: ResultadoPais[] }>(
+			'/geo/revisar',
+			{ url, paises, proveedor }
+		),
+
+	historial: (limite = 30) => pedir<{ lotes: LoteHistorial[] }>(`/geo/historial?limit=${limite}`),
+
+	capturaUrl: (loteId: string, pais: string) =>
+		`${BASE}/geo/captura/${encodeURIComponent(loteId)}/${encodeURIComponent(pais)}`
 };
